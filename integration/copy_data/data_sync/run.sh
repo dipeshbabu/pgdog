@@ -168,22 +168,20 @@ psql -d "${SRC_DB}" -c "UPDATE copy_data.full_identity_events SET label = 'dup_c
 psql -d "${SRC_DB}" -c "UPDATE copy_data.full_identity_events SET tenant_id = 3 WHERE seq = 1"
 
 stop_pgbench
-# REPLICATION SENTINEL — must be the last DML issued against the source.
-# Updating this row to 'sentinel_done' produces a WAL record that is downstream of
-# every preceding change. The poll loop below waits for it to land on the destination.
-psql -d "${SRC_DB}" -c "UPDATE copy_data.full_identity_events SET label = 'sentinel_done' WHERE seq = 999"
+# These markers must be the last DML issued against the source. Each destination
+# shard must apply its own marker before replication can be stopped.
+psql -d "${SRC_DB}" -c "UPDATE copy_data.full_identity_events SET label = 'sentinel_done' WHERE seq IN (998, 999)"
 
-# Wait for the replication sentinel to land on the destination.
-# seq=999 is dedicated solely to this purpose — see setup.sql.
-# WAL is ordered: once the sentinel row has propagated, every preceding change has too.
+# Wait for both shards, which can apply the ordered WAL stream at different rates.
 echo "Waiting for streaming changes to reach destination (timeout 120s)..."
 DEADLINE=$((SECONDS + 120))
+SENTINEL_SQL="SELECT COUNT(*) FROM copy_data.full_identity_events WHERE seq IN (998, 999) AND label = 'sentinel_done'"
 while true; do
-    SENTINEL=$(sum_shards "${DST_DB1}" "${DST_DB2}" \
-        "SELECT COUNT(*) FROM copy_data.full_identity_events WHERE seq = 999 AND label = 'sentinel_done'" 0)
-    [ "${SENTINEL}" -eq 1 ] && break
+    SENTINEL_0=$(query_one "${DST_DB1}" "${SENTINEL_SQL}" 2>/dev/null || echo 0)
+    SENTINEL_1=$(query_one "${DST_DB2}" "${SENTINEL_SQL}" 2>/dev/null || echo 0)
+    [ "${SENTINEL_0}" -eq 1 ] && [ "${SENTINEL_1}" -eq 1 ] && break
     if ! kill -0 "${REPL_PID}" 2>/dev/null; then
-        echo "ERROR: replication process exited before the sentinel (seq=999 label=sentinel_done) was delivered"
+        echo "ERROR: replication process exited before both shard sentinels were delivered"
         exit 1
     fi
     if [ "${SECONDS}" -ge "${DEADLINE}" ]; then
