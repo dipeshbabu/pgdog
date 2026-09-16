@@ -25,6 +25,7 @@ export PGPASSWORD=pgdog
 
 BENCH_PID=""
 REPL_PID=""
+BENCH_APP="pgdog-copy-data-$$"
 
 drop_replication_slots() {
     local db
@@ -49,12 +50,9 @@ cleanup() {
 trap cleanup EXIT
 
 start_pgbench() {
-    (
-        pgbench -h 127.0.0.1 -p 5432 -U pgdog pgdog \
-            -t 100000000 -c 3 --protocol extended \
-            -f "${SCRIPT_DIR}/pgbench.sql" -P 1
-
-    ) &
+    PGAPPNAME="${BENCH_APP}" pgbench -h 127.0.0.1 -p 5432 -U pgdog pgdog \
+        -t 100000000 -c 3 --protocol extended \
+        -f "${SCRIPT_DIR}/pgbench.sql" -P 1 &
     BENCH_PID=$!
 }
 
@@ -63,6 +61,15 @@ stop_pgbench() {
         kill ${BENCH_PID} 2>/dev/null || true
         wait ${BENCH_PID} 2>/dev/null || true
         BENCH_PID=""
+        # A client can exit while PostgreSQL is still finishing its last command.
+        local deadline=$((SECONDS + 30))
+        while [ "$(query_one "${SRC_DB}" "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND application_name = '${BENCH_APP}'")" -ne 0 ]; do
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+                echo "ERROR: pgbench backends did not stop within 30s"
+                exit 1
+            fi
+            sleep 0.1
+        done
     fi
 }
 
@@ -106,7 +113,7 @@ PGDOG_BIN="${PGDOG_BIN}" bash "${SCRIPT_DIR}/prepare.sh"
 #
 start_pgbench
 ${PGDOG_BIN} --config "${PGDOG_CONFIG}" --users "${PGDOG_USERS}" \
-    data-sync --from-database source --to-database destination --publication pgdog &
+    data-sync --from-database source --to-database destination --publication pgdog --replication-slot copy_data_0 &
 REPL_PID=$!
 
 # Give replication a moment to connect.
@@ -119,9 +126,21 @@ if ! kill -0 ${REPL_PID} 2>/dev/null; then
     exit $?
 fi
 
-# Let the initial table copy finish before injecting streaming DML.
-echo "Letting replication run for 15 seconds..."
-sleep 15
+# The permanent slot starts streaming only after every table's initial COPY has
+# completed. A marker observed earlier could have arrived through the snapshot.
+echo "Waiting for initial COPY to finish (timeout 120s)..."
+DEADLINE=$((SECONDS + 120))
+while [ "$(query_one "${SRC_DB}" "SELECT EXISTS (SELECT 1 FROM pg_replication_slots s JOIN pg_stat_replication r ON r.pid = s.active_pid WHERE s.slot_name = 'copy_data_0_0' AND r.state IN ('catchup', 'streaming'))")" != "t" ]; do
+    if ! kill -0 "${REPL_PID}" 2>/dev/null; then
+        echo "ERROR: replication process exited before initial COPY finished"
+        exit 1
+    fi
+    if [ "${SECONDS}" -ge "${DEADLINE}" ]; then
+        echo "ERROR: initial COPY did not finish within 120s"
+        exit 1
+    fi
+    sleep 0.2
+done
 
 # TOAST stream test: rows were seeded in setup.sql and copied to the destination
 # during the initial snapshot. Now UPDATE only `title`, leaving `body` untouched.
