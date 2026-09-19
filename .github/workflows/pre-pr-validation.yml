@@ -134,7 +134,8 @@ jobs:
     - name: Prepare PostgreSQL 18 cluster
       run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname\
         \ \"$cluster\")\")\n  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo\
-        \ apt-get install -y --no-install-recommends postgresql-18\nsudo systemctl stop postgresql\n"
+        \ apt-get install -y --no-install-recommends postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster\
+        \ 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
     - name: Compute cache key
       id: cache-key
       run: echo "key=pgdog-bin-${{ runner.os }}-coverage-$(bash integration/ci/cache-key.sh)" >> "$GITHUB_OUTPUT"
@@ -207,7 +208,8 @@ jobs:
     - name: Prepare PostgreSQL 18 cluster
       run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname\
         \ \"$cluster\")\")\n  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo\
-        \ apt-get install -y --no-install-recommends postgresql-18\nsudo systemctl stop postgresql\n"
+        \ apt-get install -y --no-install-recommends postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster\
+        \ 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
     - uses: Swatinem/rust-cache@v2
       with:
         prefix-key: v1
