@@ -5,7 +5,7 @@ test "$(getconf PAGE_SIZE)" = 4096
 unset JEMALLOC_SYS_WITH_LG_PAGE
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends build-essential cmake clang pkg-config libssl-dev mold postgresql-16 postgresql-client-16
-sudo pg_createcluster 16 allocator-bench --port=55432 --start
+sudo pg_createcluster 16 allocatorbench --port=55432 --start
 sudo -u postgres psql -p 55432 -v ON_ERROR_STOP=1 -c "CREATE ROLE allocator_bench LOGIN PASSWORD 'allocator_bench';"
 sudo -u postgres createdb -p 55432 -O allocator_bench allocator_bench
 mkdir -p allocator-results
