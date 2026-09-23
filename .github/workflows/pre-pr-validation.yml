@@ -181,6 +181,16 @@ jobs:
           '
     - name: Setup dependencies
       run: bash integration/ci/setup.sh --with-toxi
+    - name: Isolate partial request cleanup
+      if: matrix.name == 'rust'
+      run: |
+        SCRIPT_DIR="$PWD/integration/rust"
+        source integration/common.sh
+        run_pgdog
+        wait_for_pgdog
+        cd integration/rust
+        cargo nextest run --profile integration test_partial_request_disconnect
+        stop_pgdog
     - name: Run ${{ matrix.name }}
       run: bash ${{ matrix.script }}
     - name: Ensure PgDog stopped
@@ -215,6 +225,12 @@ jobs:
         prefix-key: v1
     - name: Setup PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
+    - name: Isolate replication regressions
+      env:
+        RUSTFLAGS: --cfg tokio_unstable -C link-dead-code
+      run: |
+        cargo llvm-cov nextest --lcov --output-path isolated-missed-rows.info --test-threads=1 -p pgdog backend::replication::logical::publisher::replication_stream::tests::replication_missed_rows_survive_reconnect_and_accumulate
+        cargo llvm-cov nextest --lcov --output-path isolated-dml.info --test-threads=1 -p pgdog backend::replication::logical::publisher::replication_stream::tests::replication_applies_dml_and_reports_progress
     - name: Run tests with coverage
       env:
         RUSTFLAGS: --cfg tokio_unstable -C link-dead-code
