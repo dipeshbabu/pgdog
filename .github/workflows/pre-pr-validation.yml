@@ -1,0 +1,43 @@
+name: partial request validation
+'on':
+  push:
+    branches:
+    - ci/validate-1610-disconnect-*
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: v1
+        cache-on-failure: true
+    - name: Setup PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Build PgDog
+      run: cargo build --bin pgdog
+    - name: Isolate partial-request disconnect
+      run: 'export PGDOG_BIN="$GITHUB_WORKSPACE/target/debug/pgdog"
+
+        source integration/common.sh
+
+        run_pgdog
+
+        wait_for_pgdog
+
+        cargo nextest run --profile integration -p integration_tests_rust -E ''test(integration::partial_req::test_partial_request_disconnect)''
+
+        '
