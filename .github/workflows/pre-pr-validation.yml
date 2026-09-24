@@ -34,6 +34,10 @@ jobs:
       run: bash integration/ci/setup.sh --with-toxi
     - name: Run focused RESET and DISCARD tests
       run: cargo nextest run --profile dev -p pgdog --no-fail-fast -E 'test(reset_all) | test(discard_all) | test(backend::prepared_statements) | test(backend::protocol)'
+    - name: Check formatting and Clippy
+      run: 'cargo fmt --all -- --check
+
+        cargo clippy --all-targets -- -D warnings'
     - name: Build PgDog
       run: cargo build --bin pgdog
     - name: Compare RESET ALL with PostgreSQL
