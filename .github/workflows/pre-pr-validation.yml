@@ -1,16 +1,19 @@
-name: isolated disconnect validation
+name: review reset startup validation
 'on':
   push:
     branches:
     - ci/validate-reset-startup-*
+  workflow_dispatch: {}
 permissions:
   contents: read
 jobs:
   focused:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
     - name: Install Linux build dependencies
       run: 'sudo apt-get update
 
@@ -27,9 +30,15 @@ jobs:
         cache-on-failure: true
     - name: Setup PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
+    - name: Run focused RESET and DISCARD tests
+      run: cargo nextest run --profile dev -p pgdog --no-fail-fast -E 'test(reset_all) | test(discard_all)'
+    - name: Check formatting and Clippy
+      run: 'cargo fmt --all -- --check
+
+        cargo clippy --all-targets -- -D warnings'
     - name: Build PgDog
       run: cargo build --bin pgdog
-    - name: Isolate partial-request disconnect
+    - name: Compare RESET ALL with PostgreSQL
       run: 'export PGDOG_BIN="$GITHUB_WORKSPACE/target/debug/pgdog"
 
         source integration/common.sh
@@ -38,6 +47,15 @@ jobs:
 
         wait_for_pgdog
 
-        cargo nextest run --profile integration -p integration_tests_rust -E ''test(integration::partial_req::test_partial_request_disconnect)''
+        cargo nextest run --profile integration -p integration_tests_rust -E ''test(test_reset_all_startup_parameters)''
 
         '
+    - name: Upload regression logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: reset-startup-regression-logs
+        path: 'baseline-reset.log
+
+          integration/log.txt'
+        if-no-files-found: ignore
