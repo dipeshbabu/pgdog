@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
     - name: Install Linux build dependencies
       run: 'sudo apt-get update
 
@@ -30,7 +32,9 @@ jobs:
     - name: Setup PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
     - name: Reproduce startup reset on main
-      run: 'git show 5c29da6be54a846084615e0af79721fab36c76b4:pgdog/src/net/parameter.rs > pgdog/src/net/parameter.rs
+      run: 'set -o pipefail
+
+        git show 5c29da6be54a846084615e0af79721fab36c76b4:pgdog/src/net/parameter.rs > pgdog/src/net/parameter.rs
 
         git show 5c29da6be54a846084615e0af79721fab36c76b4:pgdog/src/frontend/client/query_engine/set.rs > pgdog/src/frontend/client/query_engine/set.rs
 
