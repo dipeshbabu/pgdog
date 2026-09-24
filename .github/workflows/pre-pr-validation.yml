@@ -29,32 +29,11 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         prefix-key: v1
+        cache-on-failure: true
     - name: Setup PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
-    - name: Reproduce startup reset on main
-      run: 'set -o pipefail
-
-        git show 5c29da6be54a846084615e0af79721fab36c76b4:pgdog/src/net/parameter.rs > pgdog/src/net/parameter.rs
-
-        git show 5c29da6be54a846084615e0af79721fab36c76b4:pgdog/src/frontend/client/query_engine/set.rs > pgdog/src/frontend/client/query_engine/set.rs
-
-        set +e
-
-        cargo nextest run --profile dev -p pgdog -E ''test(test_reset_all_restores_startup_parameters)'' 2>&1 | tee baseline-reset.log
-
-        result=$?
-
-        set -e
-
-        git restore pgdog/src/net/parameter.rs pgdog/src/frontend/client/query_engine/set.rs
-
-        test "$result" -eq 100
-
-        grep -E ''FAIL.*test_reset_all_restores_startup_parameters'' baseline-reset.log
-
-        '
     - name: Run focused RESET and DISCARD tests
-      run: cargo nextest run --profile dev -p pgdog --no-fail-fast -E 'test(reset_all) | test(discard_all)'
+      run: cargo nextest run --profile dev -p pgdog --no-fail-fast -E 'test(reset_all) | test(discard_all) | test(backend::prepared_statements) | test(backend::protocol)'
     - name: Build PgDog
       run: cargo build --bin pgdog
     - name: Compare RESET ALL with PostgreSQL
