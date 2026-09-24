@@ -1,0 +1,18 @@
+name: SQL EXECUTE compatibility probe
+'on':
+  push:
+    branches:
+    - ci/probe-execute-bind-*
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v6
+    - name: Start PostgreSQL
+      run: sudo systemctl start postgresql
+    - name: Check bound SQL EXECUTE
+      run: "cat > /tmp/probe-execute.py <<'PY'\nimport ctypes as c\npq = c.CDLL(\"libpq.so.5\")\npq.PQconnectdb.argtypes = [c.c_char_p]\npq.PQconnectdb.restype = c.c_void_p\npq.PQstatus.argtypes = [c.c_void_p]\npq.PQstatus.restype = c.c_int\npq.PQexec.argtypes = [c.c_void_p, c.c_char_p]\npq.PQexec.restype = c.c_void_p\npq.PQexecParams.argtypes = [c.c_void_p, c.c_char_p, c.c_int, c.POINTER(c.c_uint), c.POINTER(c.c_char_p), c.POINTER(c.c_int), c.POINTER(c.c_int), c.c_int]\npq.PQexecParams.restype = c.c_void_p\npq.PQresultStatus.argtypes = [c.c_void_p]\npq.PQresultStatus.restype = c.c_int\npq.PQresultErrorMessage.argtypes = [c.c_void_p]\npq.PQresultErrorMessage.restype = c.c_char_p\npq.PQgetvalue.argtypes = [c.c_void_p, c.c_int, c.c_int]\npq.PQgetvalue.restype = c.c_char_p\npq.PQclear.argtypes = [c.c_void_p]\npq.PQfinish.argtypes = [c.c_void_p]\nconn = pq.PQconnectdb(b\"user=postgres dbname=postgres\")\nassert pq.PQstatus(conn) == 0\nres = pq.PQexec(conn, b\"PREPARE probe_bound (int) AS SELECT\
+        \ $1 * 2\")\nassert pq.PQresultStatus(res) == 1, pq.PQresultErrorMessage(res)\npq.PQclear(res)\nfor typed in [False, True]:\n    res = pq.PQexecParams(conn, b\"EXECUTE probe_bound($1)\", 1, (c.c_uint * 1)(23) if typed else None, (c.c_char_p * 1)(b\"21\"), None, None, 0)\n    status = pq.PQresultStatus(res)\n    print(\"typed=\", typed, \"status=\", status, \"result=\", pq.PQgetvalue(res, 0, 0) if status == 2 else pq.PQresultErrorMessage(res), flush=True)\n    pq.PQclear(res)\npq.PQfinish(conn)\nPY\nsudo -u postgres python3 /tmp/probe-execute.py"
