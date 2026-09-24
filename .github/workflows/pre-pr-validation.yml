@@ -1,4 +1,4 @@
-name: reset startup validation
+name: pre-pr validation
 'on':
   push:
     branches:
@@ -6,14 +6,191 @@ name: reset startup validation
   workflow_dispatch: {}
 permissions:
   contents: read
+concurrency:
+  group: review-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  focused:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - artifact: release
+          path: target/release/pgdog
+          rust_prefix: build-v1
+        - artifact: coverage
+          path: target/llvm-cov-target/debug/pgdog
+          rust_prefix: build-cov-debug-v1
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - name: Compute cache key
+      id: cache-key
+      run: echo "key=pgdog-bin-${{ runner.os }}-${{ matrix.artifact }}-$(bash integration/ci/cache-key.sh)" >> "$GITHUB_OUTPUT"
+    - name: Restore pgdog binary
+      id: pgdog-bin
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ matrix.path }}
+        key: ${{ steps.cache-key.outputs.key }}
+    - uses: Swatinem/rust-cache@v2
+      if: steps.pgdog-bin.outputs.cache-hit != 'true'
+      with:
+        prefix-key: ${{ matrix.rust_prefix }}
+        cache-on-failure: true
+    - name: Build (release)
+      if: steps.pgdog-bin.outputs.cache-hit != 'true' && matrix.artifact == 'release'
+      run: cargo build --release --bin pgdog
+    - name: Build (instrumented debug, for coverage)
+      if: steps.pgdog-bin.outputs.cache-hit != 'true' && matrix.artifact == 'coverage'
+      run: bash integration/ci/prepare-instrumented-pgdog.sh debug
+    - name: Save pgdog binary
+      if: steps.pgdog-bin.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ matrix.path }}
+        key: ${{ steps.cache-key.outputs.key }}
+  ci:
+    runs-on: ubuntu-24.04
+    needs:
+    - build
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.continue_on_error == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: pgbench
+          script: integration/pgbench/run.sh
+        - name: schema-sync
+          script: integration/schema_sync/run.sh
+        - name: go
+          script: integration/go/run.sh
+        - name: js
+          script: integration/js/pg_tests/run.sh
+        - name: ruby
+          script: integration/ruby/run.sh
+        - name: java
+          script: integration/java/run.sh
+        - name: elixir
+          script: integration/elixir/run.sh
+          needs_beam: true
+        - name: haskell
+          script: integration/haskell/run.sh
+          needs_haskell: true
+        - name: mirror
+          script: integration/mirror/run.sh
+        - name: sql
+          script: integration/sql/run.sh
+        - name: toxi
+          script: integration/toxi/run.sh
+        - name: rust
+          script: integration/rust/run.sh
+        - name: python
+          script: integration/python/run.sh
+        - name: two-pc
+          script: integration/two_pc/run.sh
+        - name: complex
+          script: integration/complex/run.sh
+        - name: dry-run
+          script: integration/dry_run/run.sh
+        - name: copy-data
+          script: integration/copy_data/run.sh
+        - name: load-balancer
+          script: integration/load_balancer/run.sh
+        - name: tls
+          script: integration/tls/run.sh
+        - name: resharding
+          script: integration/resharding/run.sh
+        - name: plugins
+          script: integration/plugins/run.sh
+          needs_rust_cache: true
+          continue_on_error: true
+    env:
+      PGDOG_BIN: ${{ github.workspace }}/target/llvm-cov-target/debug/pgdog
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/target/llvm-cov-target/${{ matrix.name }}-%p-%m.profraw
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - name: Compute cache key
+      id: cache-key
+      run: echo "key=pgdog-bin-${{ runner.os }}-coverage-$(bash integration/ci/cache-key.sh)" >> "$GITHUB_OUTPUT"
+    - name: Restore Rust cache for plugin builds
+      if: matrix.needs_rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: build-v1
+        cache-on-failure: true
+    - name: Restore instrumented pgdog binary
+      uses: actions/cache/restore@v5
+      with:
+        path: target/llvm-cov-target/debug/pgdog
+        key: ${{ steps.cache-key.outputs.key }}
+        fail-on-cache-miss: true
+    - name: Prepare coverage profile dir
+      run: 'mkdir -p target/llvm-cov-target
+
+        rm -f target/llvm-cov-target/*.profraw target/llvm-cov-target/*.profdata
+
+        '
+    - name: Install Erlang/Elixir
+      if: matrix.needs_beam
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '28'
+        elixir-version: 1.20.3
+    - name: Install GHC/Cabal
+      if: matrix.needs_haskell
+      id: setup-haskell
+      uses: haskell-actions/setup@v2
+      with:
+        ghc-version: 9.12.4
+        cabal-version: latest
+    - name: Cache Cabal dependencies
+      if: matrix.needs_haskell
+      uses: actions/cache@v5
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: cabal-${{ runner.os }}-${{ steps.setup-haskell.outputs.ghc-version }}-${{ hashFiles('integration/haskell/*.cabal', 'integration/haskell/cabal.project', 'integration/haskell/**/*.hs') }}
+        restore-keys: 'cabal-${{ runner.os }}-${{ steps.setup-haskell.outputs.ghc-version }}-
+
+          '
+    - name: Setup dependencies
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Run ${{ matrix.name }}
+      run: bash ${{ matrix.script }}
+    - name: Ensure PgDog stopped
+      if: always()
+      run: bash integration/ci/ensure-pgdog-stopped.sh
+    - name: Generate coverage report
+      if: always()
+      run: cargo llvm-cov report --package pgdog --lcov --output-path ${{ matrix.name }}.lcov
+  tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v6
-      with:
-        fetch-depth: 0
     - name: Install Linux build dependencies
       run: 'sudo apt-get update
 
@@ -32,32 +209,62 @@ jobs:
         cache-on-failure: true
     - name: Setup PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
-    - name: Run focused RESET and DISCARD tests
-      run: cargo nextest run --profile dev -p pgdog --no-fail-fast -E 'test(reset_all) | test(discard_all) | test(backend::prepared_statements) | test(backend::protocol)'
-    - name: Check formatting and Clippy
-      run: 'cargo fmt --all -- --check
+    - name: Run tests with coverage
+      env:
+        RUSTFLAGS: --cfg tokio_unstable -C link-dead-code
+      run: 'cargo llvm-cov clean --workspace
 
-        cargo clippy --all-targets -- -D warnings'
-    - name: Build PgDog
-      run: cargo build --bin pgdog
-    - name: Compare RESET ALL with PostgreSQL
-      run: 'export PGDOG_BIN="$GITHUB_WORKSPACE/target/debug/pgdog"
-
-        source integration/common.sh
-
-        run_pgdog
-
-        wait_for_pgdog
-
-        cargo nextest run --profile integration -p integration_tests_rust -E ''test(test_reset_all_startup_parameters)''
+        cargo llvm-cov nextest --lcov --output-path lcov.info --no-fail-fast --test-threads=1 --filter-expr "package(pgdog) | package(pgdog-config) | package(pgdog-vector) | package(pgdog-stats) | package(pgdog-postgres-types)"
 
         '
-    - name: Upload regression logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: reset-startup-regression-logs
-        path: 'baseline-reset.log
+    - name: Run documentation tests
+      run: cargo test --doc
+  fmt:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
 
-          integration/log.txt'
-        if-no-files-found: ignore
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - name: Format
+      run: cargo fmt --all -- --check
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+  plugin-unit-tests:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: plugin-unit-v1
+        cache-on-failure: true
+    - name: Run plugin unit tests
+      run: cargo nextest run -E 'package(pgdog-example-plugin)' --no-fail-fast
+  macos:
+    runs-on: macos-26
+    steps:
+    - uses: actions/checkout@v6
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+    - name: Build
+      run: cargo build
