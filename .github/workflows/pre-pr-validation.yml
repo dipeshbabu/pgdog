@@ -267,3 +267,58 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: v1
+        cache-on-failure: true
+    - name: Setup PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Confirm regression fails before the fix
+      run: 'git show 6ad4ca3c:pgdog/src/frontend/router/parser/cache/cache_impl.rs > pgdog/src/frontend/router/parser/cache/cache_impl.rs
+
+        set +e
+
+        cargo nextest run --profile dev -p pgdog test_global_sequence_follows_resolved_schema > baseline-schema-cache.log 2>&1
+
+        result=$?
+
+        set -e
+
+        cat baseline-schema-cache.log
+
+        git restore pgdog/src/frontend/router/parser/cache/cache_impl.rs
+
+        test "$result" -eq 100
+
+        grep -q ''tenant_b_users_id_seq'' baseline-schema-cache.log
+
+        '
+    - name: Verify sequence rewrites and cache behavior
+      run: cargo nextest run --profile dev -p pgdog -E 'test(rewrite::statement::auto_id) | test(parser::cache)'
+    - name: Upload regression log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: schema-cache-baseline
+        path: baseline-schema-cache.log
