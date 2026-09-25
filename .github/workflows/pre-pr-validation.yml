@@ -52,6 +52,8 @@ jobs:
 
         wait_for_pgdog
 
+        cargo nextest run --profile integration -p integration_tests_rust advisory_unlock_null_parameter_keeps_session_lock
+
         cargo nextest run --profile integration -p integration_tests_rust -E ''test(integration::advisory_locks)''
 
         stop_pgdog
