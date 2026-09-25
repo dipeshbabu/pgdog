@@ -1,0 +1,69 @@
+name: default values Rust isolation
+'on':
+  push:
+    branches:
+    - ci/probe-default-disconnect-20260925
+permissions:
+  contents: read
+concurrency:
+  group: review-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: v1
+        cache-on-failure: true
+    - name: Setup PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Build PgDog
+      run: cargo build --bin pgdog
+    - name: Isolate disconnect and DEFAULT VALUES regressions
+      run: 'export PGDOG_BIN="$GITHUB_WORKSPACE/target/debug/pgdog"
+
+        SCRIPT_DIR="$PWD/integration/rust"
+
+        source integration/common.sh
+
+        run_pgdog
+
+        wait_for_pgdog
+
+        cd integration/rust
+
+        cargo nextest run --profile integration test_partial_request_disconnect
+
+        cargo nextest run --profile integration test_omni_default_values_primary_keys
+
+        stop_pgdog
+
+        '
+    - name: Ensure PgDog stopped
+      if: always()
+      run: bash integration/ci/ensure-pgdog-stopped.sh
+    - name: Upload integration log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: default-values-isolation
+        path: integration/log.txt
