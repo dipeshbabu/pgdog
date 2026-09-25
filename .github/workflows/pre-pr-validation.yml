@@ -51,9 +51,9 @@ jobs:
 
         cd integration/rust
 
-        cargo nextest run --profile integration test_partial_request_disconnect
-
         cargo nextest run --profile integration test_omni_default_values_primary_keys
+
+        cargo nextest run --profile integration test_partial_request_disconnect
 
         stop_pgdog
 
