@@ -1,0 +1,68 @@
+name: unlock review validation
+'on':
+  push:
+    branches:
+    - ci/review-unlock-rust-20260925
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: v1
+        cache-on-failure: true
+    - name: Setup PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Advisory lock unit tests
+      run: cargo nextest run --profile dev -p pgdog -E 'test(advisory_lock) | test(advisory_unlock)'
+    - name: Format
+      run: cargo fmt --all -- --check
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+    - name: Build PgDog
+      run: cargo build --bin pgdog
+    - name: Rust advisory lock integration tests
+      run: 'export PGDOG_BIN="$GITHUB_WORKSPACE/target/debug/pgdog"
+
+        SCRIPT_DIR="$PWD/integration/rust"
+
+        source integration/common.sh
+
+        run_pgdog
+
+        wait_for_pgdog
+
+        cargo nextest run --profile integration -p integration_tests_rust -E ''test(integration::advisory_locks)''
+
+        stop_pgdog
+
+        '
+    - name: Ensure PgDog stopped
+      if: always()
+      run: bash integration/ci/ensure-pgdog-stopped.sh
+    - name: Upload integration log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: advisory-unlock-review
+        path: integration/log.txt
