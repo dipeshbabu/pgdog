@@ -1,0 +1,35 @@
+name: sequence review validation
+'on':
+  push:
+    branches:
+    - ci/review-sequence-schema-20260925
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: v1
+        cache-on-failure: true
+    - name: Auto ID regressions
+      run: cargo nextest run --profile dev -p pgdog frontend::router::parser::rewrite::statement::auto_id
+    - name: Format
+      run: cargo fmt --all -- --check
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
