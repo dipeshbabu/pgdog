@@ -38,7 +38,7 @@ jobs:
       run: bash integration/ci/setup.sh --with-toxi
     - name: Build PgDog
       run: cargo build --bin pgdog
-    - name: Isolate disconnect and DEFAULT VALUES regressions
+    - name: Isolate reload and DEFAULT VALUES regressions
       run: 'export PGDOG_BIN="$GITHUB_WORKSPACE/target/debug/pgdog"
 
         SCRIPT_DIR="$PWD/integration/rust"
@@ -53,7 +53,7 @@ jobs:
 
         cargo nextest run --profile integration test_omni_default_values_primary_keys
 
-        cargo nextest run --profile integration test_partial_request_disconnect
+        cargo nextest run --profile integration test_reload_connection_count_stable
 
         stop_pgdog
 
