@@ -35,7 +35,7 @@ jobs:
       run: bash integration/ci/setup.sh --with-toxi
     - name: Prepared statements and rewrite regressions
       run: cargo nextest run --profile dev -p pgdog -E 'test(backend::prepared_statements) | test(rewrite_simple_prepared) | test(rewrite_projection)
-        | test(rewrite_offset) | test(rewrite::statement::simple_prepared) | test(rewrite::statement::offset) | test(parser::cache)'
+        | test(rewrite_offset) | test(rewrite::statement::simple_prepared) | test(rewrite::statement::offset) | test(parser::cache) | test(schema_changed)'
     - name: Format
       run: cargo fmt --all -- --check
     - name: Clippy
