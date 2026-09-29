@@ -5,9 +5,6 @@ name: Isolate partial request test
     - ci/validate-bencher-pin-20260929
 permissions:
   contents: read
-concurrency:
-  group: review-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   isolated:
     runs-on: ubuntu-24.04
