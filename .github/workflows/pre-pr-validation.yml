@@ -189,6 +189,21 @@ jobs:
       with:
         path: ~/.gem
         key: gems-${{ runner.os }}-${{ hashFiles('integration/toxi/Gemfile.lock', 'integration/ruby/Gemfile.lock') }}
+    - name: Isolate partial request regression
+      if: matrix.name == 'rust-2'
+      run: 'SCRIPT_DIR="$PWD/integration/rust"
+
+        source integration/common.sh
+
+        run_pgdog
+
+        wait_for_pgdog
+
+        (cd integration/rust && cargo nextest run --profile integration test_partial_request_disconnect)
+
+        stop_pgdog
+
+        '
     - name: Run ${{ matrix.name }}
       env:
         NEXTEST_SHARD: ${{ matrix.shard }}
