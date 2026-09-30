@@ -1,4 +1,4 @@
-name: Issue 1686 regression validation
+name: Full pre-PR validation
 'on':
   push:
     branches:
@@ -6,13 +6,340 @@ name: Issue 1686 regression validation
 permissions:
   contents: read
 jobs:
-  focused:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - uses: ./.github/actions/ci-deps
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - name: Compute cache key
+      id: cache-key
+      run: echo "key=pgdog-bin-${{ runner.os }}-coverage-$(bash integration/ci/cache-key.sh)" >> "$GITHUB_OUTPUT"
+    - name: Restore pgdog binary
+      id: pgdog-bin
+      uses: actions/cache/restore@v5
+      with:
+        path: target/llvm-cov-target/debug/pgdog
+        key: ${{ steps.cache-key.outputs.key }}
+    - uses: Swatinem/rust-cache@v2
+      if: steps.pgdog-bin.outputs.cache-hit != 'true'
+      with:
+        prefix-key: build-cov-debug-v1
+    - name: Build (instrumented debug, for coverage)
+      if: steps.pgdog-bin.outputs.cache-hit != 'true'
+      run: bash integration/ci/prepare-instrumented-pgdog.sh debug
+    - name: Save pgdog binary
+      if: steps.pgdog-bin.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: target/llvm-cov-target/debug/pgdog
+        key: ${{ steps.cache-key.outputs.key }}
+    timeout-minutes: 60
+  ci:
+    runs-on: ubuntu-24.04
+    needs:
+    - build
+    timeout-minutes: 60
+    continue-on-error: ${{ matrix.continue_on_error == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: pgbench
+          script: integration/pgbench/run.sh
+        - name: schema-sync
+          script: integration/schema_sync/run.sh
+        - name: go
+          script: integration/go/run.sh
+        - name: js
+          script: integration/js/pg_tests/run.sh
+        - name: ruby
+          script: integration/ruby/run.sh
+          needs_gems: true
+        - name: java
+          script: integration/java/run.sh
+        - name: elixir
+          script: integration/elixir/run.sh
+          needs_beam: true
+        - name: haskell
+          script: integration/haskell/run.sh
+          needs_haskell: true
+        - name: mirror
+          script: integration/mirror/run.sh
+        - name: sql
+          script: integration/sql/run.sh
+        - name: toxi
+          script: integration/toxi/run.sh
+          needs_gems: true
+        - name: rust-1
+          script: integration/rust/run.sh
+          shard: 1/3
+          needs_rust_cache: true
+        - name: rust-2
+          script: integration/rust/run.sh
+          shard: 2/3
+          needs_rust_cache: true
+        - name: rust-3
+          script: integration/rust/run.sh
+          shard: 3/3
+          needs_rust_cache: true
+        - name: python
+          script: integration/python/run.sh
+        - name: two-pc
+          script: integration/two_pc/run.sh
+        - name: complex
+          script: integration/complex/run.sh
+        - name: dry-run
+          script: integration/dry_run/run.sh
+        - name: copy-data
+          script: integration/copy_data/run.sh
+        - name: load-balancer
+          script: integration/load_balancer/run.sh
+          lb_part: rest
+          needs_rust_cache: true
+        - name: load-balancer-prepared
+          script: integration/load_balancer/run.sh
+          lb_part: prepared
+          needs_rust_cache: true
+        - name: tls
+          script: integration/tls/run.sh
+        - name: resharding
+          script: integration/resharding/run.sh
+        - name: plugins
+          script: integration/plugins/run.sh
+          needs_rust_cache: true
+          continue_on_error: true
+    env:
+      PGDOG_BIN: ${{ github.workspace }}/target/llvm-cov-target/debug/pgdog
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/target/llvm-cov-target/${{ matrix.name }}-%p-%m.profraw
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - uses: ./.github/actions/ci-deps
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - name: Compute cache key
+      id: cache-key
+      run: echo "key=pgdog-bin-${{ runner.os }}-coverage-$(bash integration/ci/cache-key.sh)" >> "$GITHUB_OUTPUT"
+    - name: Restore Rust cache for plugin builds
+      if: matrix.needs_rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: build-v1
+    - name: Restore instrumented pgdog binary
+      uses: actions/cache/restore@v5
+      with:
+        path: target/llvm-cov-target/debug/pgdog
+        key: ${{ steps.cache-key.outputs.key }}
+        fail-on-cache-miss: true
+    - name: Prepare coverage profile dir
+      run: 'mkdir -p target/llvm-cov-target
+
+        rm -f target/llvm-cov-target/*.profraw target/llvm-cov-target/*.profdata
+
+        '
+    - name: Install Erlang/Elixir
+      if: matrix.needs_beam
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '28'
+        elixir-version: 1.20.3
+    - name: Install GHC/Cabal
+      if: matrix.needs_haskell
+      id: setup-haskell
+      uses: haskell-actions/setup@v2
+      with:
+        ghc-version: 9.12.4
+        cabal-version: 3.18.1.0
+    - name: Cache Cabal dependencies
+      if: matrix.needs_haskell
+      uses: actions/cache@v5
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: cabal-${{ runner.os }}-${{ steps.setup-haskell.outputs.ghc-version }}-${{ steps.setup-haskell.outputs.cabal-version }}-${{ hashFiles('integration/haskell/*.cabal',
+          'integration/haskell/cabal.project', 'integration/haskell/**/*.hs') }}
+        restore-keys: 'cabal-${{ runner.os }}-${{ steps.setup-haskell.outputs.ghc-version }}-${{ steps.setup-haskell.outputs.cabal-version }}-
+
+          '
+    - name: Setup dependencies
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Cache gems
+      if: matrix.needs_gems
+      uses: actions/cache@v5
+      with:
+        path: ~/.gem
+        key: gems-${{ runner.os }}-${{ hashFiles('integration/toxi/Gemfile.lock', 'integration/ruby/Gemfile.lock') }}
+    - name: Run ${{ matrix.name }}
+      env:
+        NEXTEST_SHARD: ${{ matrix.shard }}
+        LB_PART: ${{ matrix.lb_part }}
+      run: bash ${{ matrix.script }}
+    - name: Ensure PgDog stopped
+      if: always()
+      run: bash integration/ci/ensure-pgdog-stopped.sh
+    - name: Generate coverage report
+      if: ${{ github.event_name != 'merge_group' }}
+      run: cargo llvm-cov report --package pgdog --lcov --output-path ${{ matrix.name }}.lcov
+  success:
+    name: All Integration Tests Passed
+    needs: ci
+    runs-on: ubuntu-24.04
+    steps:
+    - run: echo Done!
+    timeout-minutes: 60
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: 1
+          shard: 1/3
+        - name: 2
+          shard: 2/3
+        - name: 3
+          shard: 3/3
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - uses: ./.github/actions/ci-deps
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: v1
+    - name: Setup PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Run tests with coverage
+      env:
+        RUSTFLAGS: --cfg tokio_unstable -C link-dead-code
+      run: 'cargo llvm-cov clean --workspace
+
+        cargo llvm-cov nextest --no-report --no-fail-fast --test-threads=1 --partition count:${{ matrix.shard }} --filter-expr "package(pgdog)
+        | package(pgdog-config) | package(pgdog-vector) | package(pgdog-stats) | package(pgdog-postgres-types)"
+
+        '
+    - name: Generate coverage report
+      if: ${{ github.event_name != 'merge_group' }}
+      run: cargo llvm-cov report --lcov --output-path lcov.info
+  doc-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - uses: ./.github/actions/ci-deps
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - uses: Swatinem/rust-cache@v2
       with:
-        fetch-depth: 0
+        prefix-key: unit-v1
+    - run: cargo test --doc
+  tests:
+    needs:
+    - coverage
+    - doc-tests
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+    - run: test "${{ needs.coverage.result }}" = "success" && test "${{ needs.doc-tests.result }}" = "success"
+    timeout-minutes: 60
+  fmt:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - uses: ./.github/actions/ci-deps
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - name: Format
+      run: cargo fmt --all -- --check
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+    timeout-minutes: 60
+  plugin-unit-tests:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - uses: ./.github/actions/ci-deps
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: plugin-unit-v1
+    - name: Run plugin unit tests
+      run: cargo nextest run -E 'package(pgdog-example-plugin)' --no-fail-fast
+  macos:
+    runs-on: macos-26
+    steps:
+    - uses: actions/checkout@v6
+    - uses: Swatinem/rust-cache@v2
+    - name: Build
+      run: cargo build
+  benchmark-image:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v6
     - name: Install Linux build dependencies
       run: 'sudo apt-get update
 
@@ -29,48 +356,13 @@ jobs:
         \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
     - uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: v1
-        cache-on-failure: true
-    - name: Setup PostgreSQL
-      run: bash integration/ci/setup.sh --with-toxi
-    - name: Reproduce on main
-      run: 'set -euo pipefail
+        prefix-key: build-v1
+    - name: Build
+      run: cargo build --release --bin pgdog
+    - name: Build image
+      run: 'docker build --build-context bin=target/release -f benches/perf/Dockerfile -t pgdog-bench .
 
-        path=pgdog/src/backend/databases.rs
-
-        git checkout 65b24375ff9f6a19d4409140432dd0d25c82b704 -- "$path"
-
-        set +e
-
-        cargo nextest run --profile dev -p pgdog test_passthrough_stats_survive_reload_without_static_users > baseline.log 2>&1
-
-        result=$?
-
-        set -e
-
-        git checkout "$GITHUB_SHA" -- "$path"
-
-        cat baseline.log
-
-        test "$result" -ne 0
-
-        grep -q "passthrough query counters must survive reload" baseline.log
+        docker save pgdog-bench | gzip > image.tar.gz
 
         '
-    - name: Passthrough reload and statistics regressions
-      run: 'cargo nextest run --profile dev -p pgdog -E ''test(passthrough_reload_stats) | test(backend::databases) | test(test_move_conns_to)'' '
-    - name: Format
-      run: cargo fmt --all -- --check
-    - name: Clippy
-      run: cargo clippy --all-targets -- -D warnings
-    - name: Ensure PgDog stopped
-      if: always()
-      run: bash integration/ci/ensure-pgdog-stopped.sh
-    - name: Upload integration logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: issue-1686-regression-logs
-        path: 'baseline.log
-
-          integration/log.txt'
+    timeout-minutes: 60
