@@ -1,0 +1,76 @@
+name: Issue 1686 regression validation
+'on':
+  push:
+    branches:
+    - ci/validate-1686-20260930
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Install Linux build dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev libssl-dev pkg-config postgresql python3-venv python3-virtualenv
+
+        sudo systemctl stop postgresql
+
+        '
+    - name: Install CI deps
+      run: bash integration/ci/install-deps.sh
+    - name: Prepare PostgreSQL 18 cluster
+      run: "for cluster in /etc/postgresql/*/main; do\n  [[ -d \"$cluster\" ]] || continue\n  version=$(basename \"$(dirname \"$cluster\")\")\n\
+        \  if [[ \"$version\" != 18 ]]; then sudo pg_dropcluster --stop \"$version\" main; fi\ndone\nsudo apt-get install -y --no-install-recommends\
+        \ postgresql-18\nif [[ ! -d /etc/postgresql/18/main ]]; then\n  sudo pg_createcluster 18 main --port=5432\nfi\nsudo systemctl stop postgresql\n"
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: v1
+        cache-on-failure: true
+    - name: Setup PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Reproduce on main
+      run: 'set -euo pipefail
+
+        path=pgdog/src/backend/databases.rs
+
+        git checkout 65b24375ff9f6a19d4409140432dd0d25c82b704 -- "$path"
+
+        set +e
+
+        cargo nextest run --profile dev -p pgdog test_passthrough_stats_survive_reload_without_static_users > baseline.log 2>&1
+
+        result=$?
+
+        set -e
+
+        git checkout "$GITHUB_SHA" -- "$path"
+
+        cat baseline.log
+
+        test "$result" -ne 0
+
+        grep -q "passthrough query counters must survive reload" baseline.log
+
+        '
+    - name: Passthrough reload and statistics regressions
+      run: 'cargo nextest run --profile dev -p pgdog -E ''test(passthrough_reload_stats) | test(backend::databases) | test(test_move_conns_to)'' '
+    - name: Format
+      run: cargo fmt --all -- --check
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+    - name: Ensure PgDog stopped
+      if: always()
+      run: bash integration/ci/ensure-pgdog-stopped.sh
+    - name: Upload integration logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: issue-1686-regression-logs
+        path: 'baseline.log
+
+          integration/log.txt'
