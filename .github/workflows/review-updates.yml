@@ -1,0 +1,52 @@
+name: Isolate PgDog review test failures
+'on':
+  push:
+    branches:
+    - ci/review-updates-20261001
+permissions:
+  contents: read
+jobs:
+  pr1609:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/pgdogdev/pgdog-ci:v2
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: 5b1c4e12877175d7ee401f66ebf1c4c8a714051f
+        persist-credentials: false
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: review-focused-oct1
+    - name: Set up PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - run: cargo build --bin pgdog
+    - name: Run the migrated test by name
+      shell: bash
+      run: 'source integration/common.sh
+
+        run_pgdog
+
+        wait_for_pgdog
+
+        trap stop_pgdog EXIT
+
+        cargo nextest run --profile integration -p integration_tests_rust integer_sum_bounds_across_shards'
+  pr1663:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/pgdogdev/pgdog-ci:v2
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: d7c3b9d40bb6c280aa36849d2d11421d3d19b62a
+        persist-credentials: false
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: review-focused-oct1
+    - name: Set up PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Isolate the load-balancer timeout
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog test_auto_mode_waits_for_each_new_primary --test-threads=1
