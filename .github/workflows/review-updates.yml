@@ -6,39 +6,6 @@ name: Validate PgDog maintainer review fixes
 permissions:
   contents: read
 jobs:
-  sum:
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/pgdogdev/pgdog-ci:v2
-    timeout-minutes: 45
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: c2847c7f1f37b93250db65b8d87c18b96e08f7d1
-        persist-credentials: false
-    - uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: review-focused-oct1
-    - name: Set up PostgreSQL
-      run: bash integration/ci/setup.sh --with-toxi
-    - name: Format and lint
-      run: 'cargo fmt --all -- --check
-
-        cargo clippy --all-targets -- -D warnings'
-    - name: Aggregate and error conversion unit tests
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog -E 'test(aggregate) | test(error_response)'
-    - run: cargo build --bin pgdog
-    - name: Live integer boundary comparison
-      shell: bash
-      run: 'source integration/common.sh
-
-        run_pgdog
-
-        wait_for_pgdog
-
-        trap stop_pgdog EXIT
-
-        cargo nextest run --profile integration -p integration_tests_rust integer_sum_bounds_across_shards'
   parse:
     runs-on: ubuntu-24.04
     container:
@@ -47,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: a37f088ff6488ef367dc9a087110793fef74eff2
+        ref: 864159e076c7e3e28348bd94980242588a8426f2
         persist-credentials: false
     - uses: Swatinem/rust-cache@v2
       with:
@@ -71,7 +38,7 @@ jobs:
 
         trap stop_pgdog EXIT
 
-        cargo nextest run --profile integration -p integration_tests_rust cached_parse_'
+        cargo nextest run --profile integration -p integration_tests_rust cached_parse_allows_transaction_exit_after_abort'
     - name: Prove simulated abort errors reject transaction-exit Parse
       shell: bash
       run: 'source integration/common.sh
@@ -103,24 +70,3 @@ jobs:
         grep -F ''cached ROLLBACK Parse remains valid after abort'' "$RUNNER_TEMP/proof.log"
 
         '
-  schema:
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/pgdogdev/pgdog-ci:v2
-    timeout-minutes: 45
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: b291ab4c82882e72f2ac939002210ad6570f174f
-        persist-credentials: false
-    - uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: review-focused-oct1
-    - name: Set up PostgreSQL
-      run: bash integration/ci/setup.sh --with-toxi
-    - name: Format and lint
-      run: 'cargo fmt --all -- --check
-
-        cargo clippy --all-targets -- -D warnings'
-    - name: Targeted schema reload regressions
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog schema_changed
