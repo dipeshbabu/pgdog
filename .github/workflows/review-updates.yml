@@ -1,4 +1,4 @@
-name: Isolate PgDog review test failures
+name: Validate PgDog maintainer review fixes
 'on':
   push:
     branches:
@@ -6,7 +6,7 @@ name: Isolate PgDog review test failures
 permissions:
   contents: read
 jobs:
-  pr1609:
+  sum:
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/pgdogdev/pgdog-ci:v2
@@ -14,15 +14,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 5b1c4e12877175d7ee401f66ebf1c4c8a714051f
+        ref: c2847c7f1f37b93250db65b8d87c18b96e08f7d1
         persist-credentials: false
     - uses: Swatinem/rust-cache@v2
       with:
         shared-key: review-focused-oct1
     - name: Set up PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
+    - name: Format and lint
+      run: 'cargo fmt --all -- --check
+
+        cargo clippy --all-targets -- -D warnings'
+    - name: Aggregate and error conversion unit tests
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog -E 'test(aggregate) | test(error_response)'
     - run: cargo build --bin pgdog
-    - name: Run the migrated test by name
+    - name: Live integer boundary comparison
       shell: bash
       run: 'source integration/common.sh
 
@@ -33,7 +39,7 @@ jobs:
         trap stop_pgdog EXIT
 
         cargo nextest run --profile integration -p integration_tests_rust integer_sum_bounds_across_shards'
-  pr1663:
+  parse:
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/pgdogdev/pgdog-ci:v2
@@ -41,12 +47,80 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: d7c3b9d40bb6c280aa36849d2d11421d3d19b62a
+        ref: a37f088ff6488ef367dc9a087110793fef74eff2
         persist-credentials: false
     - uses: Swatinem/rust-cache@v2
       with:
         shared-key: review-focused-oct1
     - name: Set up PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
-    - name: Isolate the load-balancer timeout
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog test_auto_mode_waits_for_each_new_primary --test-threads=1
+    - name: Format and lint
+      run: 'cargo fmt --all -- --check
+
+        cargo clippy --all-targets -- -D warnings'
+    - name: Prepared statement unit tests
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog prepared_statements
+    - run: cargo build --bin pgdog
+    - name: Live cached Parse regressions
+      shell: bash
+      run: 'source integration/common.sh
+
+        run_pgdog
+
+        wait_for_pgdog
+
+        trap stop_pgdog EXIT
+
+        cargo nextest run --profile integration -p integration_tests_rust cached_parse_'
+    - name: Prove simulated abort errors reject transaction-exit Parse
+      shell: bash
+      run: 'source integration/common.sh
+
+        source_path=pgdog/src/backend/prepared_statements.rs
+
+        trap ''stop_pgdog; git restore -- "$source_path"'' EXIT
+
+        python3 -c "exec(bytes.fromhex(''66726f6d20706174686c696220696d706f727420506174680a703d5061746828277067646f672f7372632f6261636b656e642f70726570617265645f73746174656d656e74732e727327290a733d702e726561645f7465787428290a73746172743d732e696e646578282720202020202020202020202020202020202020202020202069662073656c662e7365727665725f7374617465203d3d2053746174653a3a5472616e73616374696f6e4572726f72207b272c732e696e646578282720202020202020202020202050726f746f636f6c4d6573736167653a3a506172736528706172736529203d3e2729290a656e643d732e696e646578282720202020202020202020202020202020202020202020202073656c662e73746174652e6164645f73696d756c61746564285061727365436f6d706c6574652e6d6573736167652829293b272c7374617274290a733d735b3a73746172745d2b2720202020202020202020202020202020202020202020202069662073656c662e7365727665725f7374617465203d3d2053746174653a3a5472616e73616374696f6e4572726f72207b5c6e2020202020202020202020202020202020202020202020202020202073656c662e73746174652e6164645f73696d756c61746564284572726f72526573706f6e73653a3a696e5f6661696c65645f7472616e73616374696f6e28292e6d6573736167652829293b5c6e2020202020202020202020202020202020202020202020202020202072657475726e204f6b2848616e646c65526573756c743a3a44726f70293b5c6e2020202020202020202020202020202020202020202020207d5c6e272b735b656e643a5d0a702e77726974655f746578742873290a''))"
+
+        cargo build --bin pgdog
+
+        run_pgdog
+
+        wait_for_pgdog
+
+        set +e
+
+        cargo nextest run --profile integration -p integration_tests_rust cached_parse_allows_transaction_exit_after_abort > "$RUNNER_TEMP/proof.log" 2>&1
+
+        test_status=$?
+
+        set -e
+
+        cat "$RUNNER_TEMP/proof.log"
+
+        test "$test_status" = 100
+
+        grep -F ''cached ROLLBACK Parse remains valid after abort'' "$RUNNER_TEMP/proof.log"
+
+        '
+  schema:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/pgdogdev/pgdog-ci:v2
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: b291ab4c82882e72f2ac939002210ad6570f174f
+        persist-credentials: false
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: review-focused-oct1
+    - name: Set up PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Format and lint
+      run: 'cargo fmt --all -- --check
+
+        cargo clippy --all-targets -- -D warnings'
+    - name: Targeted schema reload regressions
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog schema_changed
