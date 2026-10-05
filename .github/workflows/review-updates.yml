@@ -79,3 +79,54 @@ jobs:
         grep -F ''assertion `left == right` failed'' "$RUNNER_TEMP/baseline.log"
 
         '
+  isolate-1609:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/pgdogdev/pgdog-ci:v2
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: e5f50da0107125867bb91ee74e6bd1058b3c281c
+        persist-credentials: false
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: review-focused-oct1
+    - name: Set up PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Run failing test by name
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog full_identity_insert_omni_dedup --test-threads=1
+  isolate-1661:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/pgdogdev/pgdog-ci:v2
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: 664955990066efd4abaf2b9902374a079c5d66cf
+        persist-credentials: false
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: review-focused-oct1
+    - name: Set up PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Run failing test by name
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog test_auto_mode_waits_for_each_new_primary --test-threads=1
+  isolate-1705:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/pgdogdev/pgdog-ci:v2
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: b6a5d07d86bbe7ce7a4178ffbd913b74b21a9f61
+        persist-credentials: false
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: review-focused-oct1
+    - name: Set up PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Run failing test by name
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog full_identity_insert_omni_dedup --test-threads=1
