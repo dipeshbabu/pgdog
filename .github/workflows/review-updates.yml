@@ -6,24 +6,6 @@ name: Verify PgDog sequence and positional INSERT reviews
 permissions:
   contents: read
 jobs:
-  sequence-coverage:
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/pgdogdev/pgdog-ci:v2
-    timeout-minutes: 45
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: 4cf1042f1aeac6fac817c9dedb13ed45c62027de
-        persist-credentials: false
-        fetch-depth: 0
-    - uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: review-focused-oct1
-    - name: Set up PostgreSQL
-      run: bash integration/ci/setup.sh --with-toxi
-    - name: Search-path sequence regressions
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog auto_id
   insert-example:
     runs-on: ubuntu-24.04
     container:
@@ -60,9 +42,9 @@ jobs:
       shell: bash
       run: 'source_path=pgdog/src/frontend/router/parser/rewrite/statement/auto_id.rs
 
-        trap ''git restore -- "$source_path"'' EXIT
+        trap ''git -c "safe.directory=$PWD" restore -- "$source_path"'' EXIT
 
-        python3 -c "exec(bytes.fromhex(''66726f6d20706174686c696220696d706f727420506174680a696d706f72742073756270726f636573730a703d5061746828277067646f672f7372632f66726f6e74656e642f726f757465722f7061727365722f726577726974652f73746174656d656e742f6175746f5f69642e727327290a733d702e726561645f7465787428290a6d61726b65723d27235b6366672874657374295d272b636872283130292b276d6f642073706c69745f74657374733b270a6d61696e3d73756270726f636573732e636865636b5f6f7574707574285b27676974272c2773686f77272c27633966313861366361386433616263643433383962346331393662656638633934383336316431663a7067646f672f7372632f66726f6e74656e642f726f757465722f7061727365722f726577726974652f73746174656d656e742f6175746f5f69642e7273275d2c746578743d54727565290a617373657274206d61726b657220696e207320616e64206d61726b657220696e206d61696e0a702e77726974655f74657874286d61696e2e73706c6974286d61726b65722c31295b305d2b6d61726b65722b732e73706c6974286d61726b65722c31295b315d290a''))"
+        python3 -c "exec(bytes.fromhex(''66726f6d20706174686c696220696d706f727420506174680a696d706f72742073756270726f636573730a703d5061746828277067646f672f7372632f66726f6e74656e642f726f757465722f7061727365722f726577726974652f73746174656d656e742f6175746f5f69642e727327290a733d702e726561645f7465787428290a6d61726b65723d27235b6366672874657374295d272b636872283130292b276d6f642073706c69745f74657374733b270a6d61696e3d73756270726f636573732e636865636b5f6f7574707574285b27676974272c272d63272c27736166652e6469726563746f72793d272b73747228506174682e6377642829292c2773686f77272c27633966313861366361386433616263643433383962346331393662656638633934383336316431663a7067646f672f7372632f66726f6e74656e642f726f757465722f7061727365722f726577726974652f73746174656d656e742f6175746f5f69642e7273275d2c746578743d54727565290a617373657274206d61726b657220696e207320616e64206d61726b657220696e206d61696e0a702e77726974655f74657874286d61696e2e73706c6974286d61726b65722c31295b305d2b6d61726b65722b732e73706c6974286d61726b65722c31295b315d290a''))"
 
         set +e
 
@@ -79,54 +61,3 @@ jobs:
         grep -F ''assertion `left == right` failed'' "$RUNNER_TEMP/baseline.log"
 
         '
-  isolate-1609:
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/pgdogdev/pgdog-ci:v2
-    timeout-minutes: 45
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: e5f50da0107125867bb91ee74e6bd1058b3c281c
-        persist-credentials: false
-    - uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: review-focused-oct1
-    - name: Set up PostgreSQL
-      run: bash integration/ci/setup.sh --with-toxi
-    - name: Run failing test by name
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog full_identity_insert_omni_dedup --test-threads=1
-  isolate-1661:
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/pgdogdev/pgdog-ci:v2
-    timeout-minutes: 45
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: 664955990066efd4abaf2b9902374a079c5d66cf
-        persist-credentials: false
-    - uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: review-focused-oct1
-    - name: Set up PostgreSQL
-      run: bash integration/ci/setup.sh --with-toxi
-    - name: Run failing test by name
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog test_auto_mode_waits_for_each_new_primary --test-threads=1
-  isolate-1705:
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/pgdogdev/pgdog-ci:v2
-    timeout-minutes: 45
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: b6a5d07d86bbe7ce7a4178ffbd913b74b21a9f61
-        persist-credentials: false
-    - uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: review-focused-oct1
-    - name: Set up PostgreSQL
-      run: bash integration/ci/setup.sh --with-toxi
-    - name: Run failing test by name
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog full_identity_insert_omni_dedup --test-threads=1
