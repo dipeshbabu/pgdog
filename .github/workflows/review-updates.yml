@@ -1,4 +1,4 @@
-name: Validate PgDog maintainer review fixes
+name: Verify PgDog sequence and positional INSERT reviews
 'on':
   push:
     branches:
@@ -6,7 +6,7 @@ name: Validate PgDog maintainer review fixes
 permissions:
   contents: read
 jobs:
-  parse:
+  sequence-coverage:
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/pgdogdev/pgdog-ci:v2
@@ -14,21 +14,36 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 8a9f082828c83cba70a287bdc655920f1b7050d9
+        ref: 4cf1042f1aeac6fac817c9dedb13ed45c62027de
         persist-credentials: false
+        fetch-depth: 0
     - uses: Swatinem/rust-cache@v2
       with:
         shared-key: review-focused-oct1
     - name: Set up PostgreSQL
       run: bash integration/ci/setup.sh --with-toxi
-    - name: Format and lint
-      run: 'cargo fmt --all -- --check
-
-        cargo clippy --all-targets -- -D warnings'
-    - name: Prepared statement unit tests
-      run: cargo nextest run --profile dev -p pgdog --bin pgdog prepared_statements
+    - name: Search-path sequence regressions
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog auto_id
+  insert-example:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/pgdogdev/pgdog-ci:v2
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: 61dd53e8b4f9d3a0d11e6b8fc8e08bed23b19fdd
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: review-focused-oct1
+    - name: Set up PostgreSQL
+      run: bash integration/ci/setup.sh --with-toxi
+    - name: Positional INSERT regressions
+      run: cargo nextest run --profile dev -p pgdog --bin pgdog auto_id_implicit_columns
     - run: cargo build --bin pgdog
-    - name: Live cached Parse regressions
+    - name: Live simple/prepared INSERTs on both shards
       shell: bash
       run: 'source integration/common.sh
 
@@ -38,35 +53,29 @@ jobs:
 
         trap stop_pgdog EXIT
 
-        cargo nextest run --profile integration -p integration_tests_rust cached_parse_allows_transaction_exit_after_abort'
-    - name: Prove simulated abort errors reject transaction-exit Parse
+        cargo nextest run --profile integration -p integration_tests_rust test_omni_implicit_insert_columns
+
+        '
+    - name: Verify the supplied-key example fails on main
       shell: bash
-      run: 'source integration/common.sh
+      run: 'source_path=pgdog/src/frontend/router/parser/rewrite/statement/auto_id.rs
 
-        source_path=pgdog/src/backend/prepared_statements.rs
+        trap ''git restore -- "$source_path"'' EXIT
 
-        trap ''stop_pgdog; git restore -- "$source_path"'' EXIT
-
-        python3 -c "exec(bytes.fromhex(''66726f6d20706174686c696220696d706f727420506174680a703d5061746828277067646f672f7372632f6261636b656e642f70726570617265645f73746174656d656e74732e727327290a733d702e726561645f7465787428290a73746172743d732e696e646578282720202020202020202020202020202020202020202020202069662073656c662e7365727665725f7374617465203d3d2053746174653a3a5472616e73616374696f6e4572726f72207b272c732e696e646578282720202020202020202020202050726f746f636f6c4d6573736167653a3a506172736528706172736529203d3e2729290a656e643d732e696e646578282720202020202020202020202020202020202020202020202073656c662e73746174652e6164645f73696d756c61746564285061727365436f6d706c6574652e6d6573736167652829293b272c7374617274290a733d735b3a73746172745d2b2720202020202020202020202020202020202020202020202069662073656c662e7365727665725f7374617465203d3d2053746174653a3a5472616e73616374696f6e4572726f72207b5c6e2020202020202020202020202020202020202020202020202020202073656c662e73746174652e6164645f73696d756c61746564284572726f72526573706f6e73653a3a696e5f6661696c65645f7472616e73616374696f6e28292e6d6573736167652829293b5c6e2020202020202020202020202020202020202020202020202020202072657475726e204f6b2848616e646c65526573756c743a3a44726f70293b5c6e2020202020202020202020202020202020202020202020207d5c6e272b735b656e643a5d0a702e77726974655f746578742873290a''))"
-
-        cargo build --bin pgdog
-
-        run_pgdog
-
-        wait_for_pgdog
+        python3 -c "exec(bytes.fromhex(''66726f6d20706174686c696220696d706f727420506174680a696d706f72742073756270726f636573730a703d5061746828277067646f672f7372632f66726f6e74656e642f726f757465722f7061727365722f726577726974652f73746174656d656e742f6175746f5f69642e727327290a733d702e726561645f7465787428290a6d61726b65723d27235b6366672874657374295d5c6e6d6f642073706c69745f74657374733b270a6d61726b65723d6d61726b65722e7265706c61636528275c6e272c270a27290a6d61696e3d73756270726f636573732e636865636b5f6f7574707574285b27676974272c2773686f77272c27633966313861366361386433616263643433383962346331393662656638633934383336316431663a7067646f672f7372632f66726f6e74656e642f726f757465722f7061727365722f726577726974652f73746174656d656e742f6175746f5f69642e7273275d2c746578743d54727565290a617373657274206d61726b657220696e207320616e64206d61726b657220696e206d61696e0a702e77726974655f74657874286d61696e2e73706c6974286d61726b65722c31295b305d2b6d61726b65722b732e73706c6974286d61726b65722c31295b315d290a''))"
 
         set +e
 
-        cargo nextest run --profile integration -p integration_tests_rust cached_parse_allows_transaction_exit_after_abort > "$RUNNER_TEMP/proof.log" 2>&1
+        cargo nextest run --profile dev -p pgdog --bin pgdog test_auto_id_implicit_columns_preserve_supplied_key > "$RUNNER_TEMP/baseline.log" 2>&1
 
         test_status=$?
 
         set -e
 
-        cat "$RUNNER_TEMP/proof.log"
+        cat "$RUNNER_TEMP/baseline.log"
 
         test "$test_status" = 100
 
-        grep -F ''cached ROLLBACK Parse remains valid after abort'' "$RUNNER_TEMP/proof.log"
+        grep -F ''assertion `left == right` failed'' "$RUNNER_TEMP/baseline.log"
 
         '
