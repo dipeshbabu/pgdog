@@ -27,7 +27,11 @@ jobs:
         with:
           prefix-key: build-v1
       - name: Build
-        run: cargo build --release --bin pgdog
+        run: |
+          cargo build --release --bin pgdog
+          bin=$(cargo test --profile microbench -p pgdog --bin pgdog --features bench --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.name == "pgdog") | .executable')
+          cp "$bin" target/release/pgdog-microbench
       - name: Build image
         run: |
           docker build --build-context bin=target/release -f benches/perf/Dockerfile -t pgdog-bench .
