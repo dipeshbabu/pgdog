@@ -1,5 +1,6 @@
 name: Validate fork benchmark image
 on:
+  workflow_dispatch: {}
   push:
     branches:
       - ci/validate-fork-benchmark-20261020
